@@ -1,6 +1,9 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { supabase } from '../lib/supabase'
 
+// supabase is null when env vars are missing — App.jsx guards against
+// rendering AuthProvider in that case, but guard here too for safety
+
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
