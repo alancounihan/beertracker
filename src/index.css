@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body {
+    @apply bg-stone-950 text-stone-100;
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-stone-950 font-semibold rounded-xl px-6 py-3 transition-colors duration-150 touch-manipulation;
+  }
+
+  .btn-secondary {
+    @apply bg-stone-800 hover:bg-stone-700 active:bg-stone-900 text-stone-100 font-medium rounded-xl px-6 py-3 transition-colors duration-150 touch-manipulation;
+  }
+
+  .card {
+    @apply bg-stone-900 rounded-2xl p-4 border border-stone-800;
+  }
+
+  .input-field {
+    @apply bg-stone-800 border border-stone-700 rounded-xl px-4 py-3 text-stone-100 w-full focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-colors;
+  }
+}
+
+/* Safe area insets for notched phones */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
