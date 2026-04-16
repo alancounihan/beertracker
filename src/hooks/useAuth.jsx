@@ -45,11 +45,27 @@ export function AuthProvider({ children }) {
       .eq('id', userId)
       .single()
 
-    if (error && error.code !== 'PGRST116') {
+    // PGRST116 = row not found — user logged in before trigger created their row
+    if (error && error.code === 'PGRST116') {
+      // Seed a minimal profile row so the app doesn't hang
+      const { data: { user } } = await supabase.auth.getUser()
+      const { data: created } = await supabase
+        .from('profiles')
+        .upsert({
+          id: userId,
+          full_name: user?.user_metadata?.full_name ?? null,
+          avatar_url: user?.user_metadata?.avatar_url ?? null,
+        })
+        .select()
+        .single()
+      setProfile(created ?? null)
+    } else if (error) {
       console.error('Error fetching profile:', error)
+      setProfile(null)
+    } else {
+      setProfile(data)
     }
 
-    setProfile(data ?? null)
     setLoading(false)
   }
 
