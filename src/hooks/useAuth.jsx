@@ -1,9 +1,6 @@
 import { useState, useEffect, createContext, useContext } from 'react'
 import { supabase } from '../lib/supabase'
 
-// supabase is null when env vars are missing — App.jsx guards against
-// rendering AuthProvider in that case, but guard here too for safety
-
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
@@ -12,22 +9,42 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        fetchProfile(session.user.id)
-      } else {
-        setLoading(false)
-      }
-    })
+    let cancelled = false
 
-    // Listen for auth changes
+    async function init() {
+      try {
+        const { data: { session }, error } = await supabase.auth.getSession()
+        if (cancelled) return
+        if (error) throw error
+
+        const currentUser = session?.user ?? null
+        setUser(currentUser)
+
+        if (currentUser) {
+          await fetchProfile(currentUser, cancelled)
+        }
+      } catch (err) {
+        console.error('Auth init error:', err)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+
+    init()
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        setUser(session?.user ?? null)
-        if (session?.user) {
-          await fetchProfile(session.user.id)
+        if (cancelled) return
+        const currentUser = session?.user ?? null
+        setUser(currentUser)
+
+        if (currentUser) {
+          setLoading(true)
+          try {
+            await fetchProfile(currentUser, cancelled)
+          } finally {
+            if (!cancelled) setLoading(false)
+          }
         } else {
           setProfile(null)
           setLoading(false)
@@ -35,46 +52,57 @@ export function AuthProvider({ children }) {
       }
     )
 
-    return () => subscription.unsubscribe()
+    return () => {
+      cancelled = true
+      subscription.unsubscribe()
+    }
   }, [])
 
-  async function fetchProfile(userId) {
-    const { data, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single()
-
-    // PGRST116 = row not found — user logged in before trigger created their row
-    if (error && error.code === 'PGRST116') {
-      // Seed a minimal profile row so the app doesn't hang
-      const { data: { user } } = await supabase.auth.getUser()
-      const { data: created } = await supabase
+  async function fetchProfile(currentUser, cancelled = false) {
+    try {
+      const { data, error } = await supabase
         .from('profiles')
-        .upsert({
-          id: userId,
-          full_name: user?.user_metadata?.full_name ?? null,
-          avatar_url: user?.user_metadata?.avatar_url ?? null,
-        })
-        .select()
+        .select('*')
+        .eq('id', currentUser.id)
         .single()
-      setProfile(created ?? null)
-    } else if (error) {
-      console.error('Error fetching profile:', error)
-      setProfile(null)
-    } else {
-      setProfile(data)
-    }
 
-    setLoading(false)
+      if (cancelled) return
+
+      if (!error) {
+        // Found a complete profile
+        setProfile(data)
+        return
+      }
+
+      if (error.code === 'PGRST116') {
+        // Row missing — user logged in before trigger fired, seed it now
+        const { data: created, error: upsertErr } = await supabase
+          .from('profiles')
+          .upsert({
+            id: currentUser.id,
+            full_name: currentUser.user_metadata?.full_name ?? null,
+            avatar_url: currentUser.user_metadata?.avatar_url ?? null,
+          })
+          .select()
+          .single()
+
+        if (!cancelled) setProfile(upsertErr ? null : created)
+        return
+      }
+
+      // Any other error (e.g. table missing) — log and carry on so app doesn't hang
+      console.error('fetchProfile error:', error.code, error.message)
+      if (!cancelled) setProfile(null)
+    } catch (err) {
+      console.error('fetchProfile threw:', err)
+      if (!cancelled) setProfile(null)
+    }
   }
 
   async function signInWithGoogle() {
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
+      options: { redirectTo: window.location.origin },
     })
     if (error) throw error
   }
@@ -86,13 +114,11 @@ export function AuthProvider({ children }) {
 
   async function updateProfile(updates) {
     if (!user) throw new Error('Not authenticated')
-
     const { data, error } = await supabase
       .from('profiles')
       .upsert({ id: user.id, ...updates, updated_at: new Date().toISOString() })
       .select()
       .single()
-
     if (error) throw error
     setProfile(data)
     return data
@@ -100,21 +126,17 @@ export function AuthProvider({ children }) {
 
   async function uploadAvatar(file) {
     if (!user) throw new Error('Not authenticated')
-
     const fileExt = file.name.split('.').pop()
-    const fileName = `${user.id}.${fileExt}`
-    const filePath = `avatars/${fileName}`
+    const filePath = `avatars/${user.id}.${fileExt}`
 
     const { error: uploadError } = await supabase.storage
       .from('avatars')
       .upload(filePath, file, { upsert: true })
-
     if (uploadError) throw uploadError
 
     const { data: { publicUrl } } = supabase.storage
       .from('avatars')
       .getPublicUrl(filePath)
-
     return publicUrl
   }
 
@@ -127,7 +149,7 @@ export function AuthProvider({ children }) {
       signOut,
       updateProfile,
       uploadAvatar,
-      refreshProfile: () => user && fetchProfile(user.id),
+      refreshProfile: () => user && fetchProfile(user),
     }}>
       {children}
     </AuthContext.Provider>
