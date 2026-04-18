@@ -44,8 +44,11 @@ export default function ProfileSetupPage() {
         gender,
         avatar_url: avatarUrl,
       })
+      // Success — App.jsx will navigate away once profile is set.
+      // setLoading(false) is handled in finally so the button never stays frozen.
     } catch (err) {
-      setError(err.message)
+      setError(err.message || 'Something went wrong. Please try again.')
+    } finally {
       setLoading(false)
     }
   }
