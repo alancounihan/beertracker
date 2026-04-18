@@ -11,6 +11,12 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     let cancelled = false
 
+    // Hard fallback: never show the loading screen for more than 6 s.
+    // Catches any network hang or unhandled edge-case.
+    const fallbackTimer = setTimeout(() => {
+      if (!cancelled) setLoading(false)
+    }, 6000)
+
     async function init() {
       try {
         const { data: { session }, error } = await supabase.auth.getSession()
@@ -26,12 +32,19 @@ export function AuthProvider({ children }) {
       } catch (err) {
         console.error('Auth init error:', err)
       } finally {
-        if (!cancelled) setLoading(false)
+        if (!cancelled) {
+          setLoading(false)
+          clearTimeout(fallbackTimer)
+        }
       }
     }
 
     init()
 
+    // onAuthStateChange handles sign-in / sign-out AFTER the initial load.
+    // We deliberately do NOT call setLoading(true) here — the loading screen
+    // is only for the very first boot. Subsequent session changes update
+    // user/profile silently in the background.
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
         if (cancelled) return
@@ -39,21 +52,20 @@ export function AuthProvider({ children }) {
         setUser(currentUser)
 
         if (currentUser) {
-          setLoading(true)
           try {
             await fetchProfile(currentUser, cancelled)
-          } finally {
-            if (!cancelled) setLoading(false)
+          } catch (err) {
+            console.error('onAuthStateChange fetchProfile error:', err)
           }
         } else {
           setProfile(null)
-          setLoading(false)
         }
       }
     )
 
     return () => {
       cancelled = true
+      clearTimeout(fallbackTimer)
       subscription.unsubscribe()
     }
   }, [])
@@ -69,13 +81,11 @@ export function AuthProvider({ children }) {
       if (cancelled) return
 
       if (!error) {
-        // Found a complete profile
         setProfile(data)
         return
       }
 
       if (error.code === 'PGRST116') {
-        // Row missing — user logged in before trigger fired, seed it now
         const { data: created, error: upsertErr } = await supabase
           .from('profiles')
           .upsert({
@@ -90,7 +100,6 @@ export function AuthProvider({ children }) {
         return
       }
 
-      // Any other error (e.g. table missing) — log and carry on so app doesn't hang
       console.error('fetchProfile error:', error.code, error.message)
       if (!cancelled) setProfile(null)
     } catch (err) {
